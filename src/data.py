@@ -10,6 +10,7 @@ import networkx as nx
 import os
 import torch_geometric
 import scipy.sparse as sp
+#TODO to change
 
 def my_inc(self, key, value, *args, **kwargs):
     if key == 'subgraph_edge_index':
