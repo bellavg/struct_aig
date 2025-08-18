@@ -4,8 +4,6 @@ import gzip
 import pickle
 import numpy as np
 import torch
-from torch import nn
-import random
 from tqdm import tqdm
 import os
 import argparse
@@ -58,8 +56,8 @@ def calculate_graph_attributes(aig: Aig, G_nx: nx.DiGraph):
     This vector will be the regression target 'y'.
     """
     # 1. Number of inversions
-    num_inversions = sum(1 for po in aig.pos if po.is_complemented) + \
-                     sum(1 for gate in aig.gates for fanin in gate.fanins if fanin.is_complemented)
+    num_inversions = sum(1 for po in aig.pos() if po.get_complement()) + \
+                     sum(1 for gate in aig.gates() for fanin in aig.fanins(gate) if fanin.get_complement())
 
     # 2. Number of nodes & 3. Number of edges
     num_nodes = G_nx.number_of_nodes()
@@ -71,14 +69,15 @@ def calculate_graph_attributes(aig: Aig, G_nx: nx.DiGraph):
     level_variance = np.var(levels) if len(levels) > 1 else 0
 
     # 6. Avg fanout, 7. Max fanout, 8. Variance fanout
-    fanouts = np.array([aig.fanout_size(n) for n in aig.nodes])
+    # Fanouts are now directly extracted from the NetworkX graph attributes.
+    fanouts = np.array([data['fanouts'] for _, data in G_nx.nodes(data=True)])
     avg_fanout = np.mean(fanouts) if len(fanouts) > 0 else 0
     max_fanout = np.max(fanouts) if len(fanouts) > 0 else 0
     variance_fanout = np.var(fanouts) if len(fanouts) > 1 else 0
 
     # 9. Avg edge level span & 10. Variance edge level span
     edge_level_spans = []
-    for u, v, data in G_nx.edges(data=True):
+    for u, v in G_nx.edges():
         level_u = G_nx.nodes[u].get('level', 0)
         level_v = G_nx.nodes[v].get('level', 0)
         edge_level_spans.append(abs(level_v - level_u))
@@ -108,7 +107,8 @@ def calculate_graph_attributes(aig: Aig, G_nx: nx.DiGraph):
         if nx.is_connected(G_undirected):
             diameter = nx.diameter(G_undirected)
             radius = nx.radius(G_undirected)
-            avg_eccentricity = nx.average_eccentricity(G_undirected)
+            # FIXED: Calculate average eccentricity manually
+            avg_eccentricity = np.mean(list(nx.eccentricity(G_undirected).values()))
         else:
             diameter, radius, avg_eccentricity = -1, -1, -1
     except nx.NetworkXError:
@@ -185,14 +185,20 @@ def add_order_info_aig(graph: Data, g_nx: nx.DiGraph, node_map: dict):
 
     # 2. Calculate reachability for DAGRA
     TC = nx.transitive_closure_dag(g_nx)
-    tc_data = from_networkx(TC)
-    # We need to map the nodes in tc_data back to our pyg graph's indices
-    tc_edge_index_mapped = torch.empty_like(tc_data.edge_index)
-    for i, edge in enumerate(tc_data.edge_index.t()):
-        u, v = edge[0].item(), edge[1].item()
-        # tc_data.n_id are the original node objects from g_nx
-        tc_edge_index_mapped[0, i] = node_map[tc_data.n_id[u]]
-        tc_edge_index_mapped[1, i] = node_map[tc_data.n_id[v]]
+
+    # --- FIXED ---
+    # Manually create the edge index from the transitive closure graph (TC).
+    # The nx.transitive_closure_dag function creates new edges without attributes,
+    # which causes an error in from_networkx due to inconsistent attributes.
+    # This approach bypasses that check by only extracting the graph structure.
+    tc_edge_list = []
+    for u, v in TC.edges():
+        tc_edge_list.append([node_map[u], node_map[v]])
+
+    if not tc_edge_list:
+        tc_edge_index_mapped = torch.empty((2, 0), dtype=torch.long)
+    else:
+        tc_edge_index_mapped = torch.tensor(tc_edge_list, dtype=torch.long).t().contiguous()
 
     graph.dag_rr_edge_index = to_undirected(tc_edge_index_mapped)
 
@@ -255,7 +261,8 @@ def process_and_save_aig_graphs(data_dir, output_path):
         filepath = os.path.join(data_dir, filename)
         try:
             aig = aigverse.read_aiger_into_aig(filepath)
-            g_nx = aig.to_networkx(levels=True, po_level_plus_one=True, one_hot_types=True)
+            # OPTIMIZED: Now creating the NetworkX graph with fanouts included
+            g_nx = aig.to_networkx(levels=True, fanouts=True)
             g_pyg, node_map = convert_nx_to_pyg(g_nx)
 
             if g_pyg.num_nodes == 0:
@@ -265,6 +272,7 @@ def process_and_save_aig_graphs(data_dir, output_path):
             # Add ordering information
             g_pyg = add_order_info_aig(g_pyg, g_nx, node_map)
 
+            # This function now uses the fanouts from g_nx
             attributes = calculate_graph_attributes(aig, g_nx)
 
             max_n = max(max_n, g_pyg.num_nodes)
