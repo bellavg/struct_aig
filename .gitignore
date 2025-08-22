@@ -4,9 +4,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 *.aig
+*.pkl.gz
 # C extensions
 *.so
-
+*.DS_Store
 # Distribution / packaging
 .Python
 build/
