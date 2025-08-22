@@ -1,12 +1,4 @@
 # -*- coding: utf-8 -*-
-import torch_geometric
-import scipy.sparse as sp
-#TODO to change
-#TODO to test
-# TODO to add padding
-
-
-# -*- coding: utf-8 -*-
 import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch
@@ -68,8 +60,23 @@ def collate_aig(data_list):
     """
     A custom collate function for the PyTorch DataLoader.
 
-    It takes a list of individual PyG `Data` objects and batches them into a
-    single `Batch` object. This is the standard and required way to handle
-    variable-sized graphs in PyTorch Geometric.
+    It pads the `mask_rc` tensor, which is 2D and has a variable size
+    ([num_nodes, num_nodes]), to the maximum number of nodes in the batch.
+    This prevents errors during the batching process. Other attributes are
+    handled correctly by the default `Batch.from_data_list` method.
     """
+    # Find the maximum number of nodes in the current batch
+    max_nodes = max([data.num_nodes for data in data_list])
+
+    # Pad only the `mask_rc` tensor for each graph in the batch
+    for data in data_list:
+        num_nodes = data.num_nodes
+
+        # The original mask is (num_nodes, num_nodes). We pad it to (max_nodes, max_nodes).
+        # The padding value of True means that the padded positions are masked (ignored).
+        padded_mask = torch.ones((max_nodes, max_nodes), dtype=torch.bool)
+        padded_mask[:num_nodes, :num_nodes] = data.mask_rc
+        data.mask_rc = padded_mask
+
+    # Now that the problematic 2D tensor is padded, we can safely create the batch
     return Batch.from_data_list(data_list)

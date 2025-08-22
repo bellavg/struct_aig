@@ -4,7 +4,7 @@
 
 # part 1
 
-# TODO run with example data
+# TODO run with example data (max 5000 nodes)
 # TODO make into pytorch lightning
 # TODO add in padding for mask and x (check other laptop to see what needs padding), test all this to make sure it still works
 # TODO full training of encoder? - check if makes sense.
@@ -105,7 +105,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a Graph Transformer for AIG structural attribute regression.')
 
     # --- Dataset and Saving Arguments ---
-    parser.add_argument('--dataset_path', type=str, required=True,
+    parser.add_argument('--dataset_path', type=str, default='../processed_data/processed_data.pkl.gz',
                         help='Path to the processed .pkl.gz AIG dataset file.')
     parser.add_argument('--save_dir', type=str, default='checkpoints', help='Directory to save model checkpoints.')
     parser.add_argument('--train_split', type=float, default=0.8, help='Proportion of the dataset to use for training.')
@@ -118,7 +118,7 @@ if __name__ == '__main__':
 
     # --- Training Arguments ---
     parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs.')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training and validation.')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training and validation.')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for the optimizer.')
     parser.add_argument('--device', type=int, default=0, help='CUDA device index to use.')
 

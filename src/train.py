@@ -27,8 +27,12 @@ def train_epoch(model, loader, optimizer, criterion, device):
         # The model predicts the 16-dimensional structural vector
         out = model(data)
 
+        # Reshape the ground truth tensor to match the output shape
+        # data.y is [batch_size * 16], we need [batch_size, 16]
+        y = data.y.view(data.num_graphs, -1)
+
         # The ground truth is stored in data.y
-        loss = criterion(out, data.y)
+        loss = criterion(out, y)
 
         loss.backward()
         optimizer.step()
@@ -56,8 +60,11 @@ def evaluate(model, loader, criterion, device):
         for data in tqdm(loader, desc="Evaluating"):
             data = data.to(device)
             out = model(data)
-            loss = criterion(out, data.y)
+
+            # Reshape the ground truth tensor to match the output shape
+            y = data.y.view(data.num_graphs, -1)
+
+            loss = criterion(out, y)
             total_loss += loss.item() * data.num_graphs
 
     return total_loss / len(loader.dataset)
-

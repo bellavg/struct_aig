@@ -18,7 +18,7 @@ class Attention(nn.Module):
     Includes the Structure-Aware (SAT) component and the DAG-aware masking (DAGRA).
     """
 
-    def __init__(self, embed_dim, num_heads=8, dropout=0., bias=False, **kwargs):
+    def __init__(self, embed_dim, num_heads=8, dropout=0., bias=True, **kwargs):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -140,7 +140,7 @@ class TransformerEncoderLayer(nn.TransformerEncoderLayer):
                  activation="relu", batch_norm=True, **kwargs):
         super().__init__(d_model, nhead, dim_feedforward, dropout, activation)
 
-        self.self_attn = Attention(d_model, nhead, dropout=dropout, bias=False, **kwargs)
+        self.self_attn = Attention(d_model, nhead, dropout=dropout, bias=True, **kwargs)
         self.batch_norm = batch_norm
         if batch_norm:
             self.norm1 = nn.BatchNorm1d(d_model)
