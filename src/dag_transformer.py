@@ -1,10 +1,11 @@
 import torch
 from torch import nn
 import torch_geometric.nn as gnn
-from layers import TransformerEncoderLayer
+from src.layers import TransformerEncoderLayer
 import math
 from torch_geometric.utils import *
 
+#TODO to test
 
 class GraphTransformerEncoder(nn.TransformerEncoder):
     """ A standard Transformer Encoder that is aware of DAG-specific arguments. """

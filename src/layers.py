@@ -4,10 +4,12 @@ from torch import nn
 import torch_geometric.nn as gnn
 import torch_geometric.utils as utils
 from einops import rearrange
-from utils import pad_batch, unpad_batch
+from src.utils import pad_batch, unpad_batch
 import torch.nn.functional as F
 
-from gnn_layers import get_simple_gnn_layer, EDGE_GNN_TYPES
+#TODO to test
+
+from src.gnn_layers import get_simple_gnn_layer, EDGE_GNN_TYPES
 
 
 class Attention(nn.Module):
@@ -20,6 +22,11 @@ class Attention(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
+        self.bias = bias
+        self.batch_first = True
+        self._qkv_same_embed_dim = True
+        # --- FIX: Add the in_proj_bias attribute and set to None ---
+        self.in_proj_bias = None
         head_dim = embed_dim // num_heads
         assert head_dim * num_heads == embed_dim, "embed_dim must be divisible by num_heads"
         self.scale = head_dim ** -0.5
@@ -40,6 +47,11 @@ class Attention(nn.Module):
         if self.bias:
             nn.init.constant_(self.to_qk.bias, 0.)
             nn.init.constant_(self.to_v.bias, 0.)
+        # --- FIX: Since to_qk handles both Q and K, its bias is the in_proj_bias ---
+        # Although we set it to None above for the check, we can link it here.
+        # This is more for completeness, the main fix is setting it to None initially.
+        self.in_proj_bias = self.to_qk.bias
+
 
     def forward(self, x, SAT, edge_index, mask_dag_,
                 edge_attr=None, ptr=None, return_attn=False):
