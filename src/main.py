@@ -85,7 +85,7 @@ def main(args):
     for epoch in range(1, args.epochs + 1):
         print(f"\n--- Epoch {epoch}/{args.epochs} ---")
 
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
         val_loss = evaluate(model, val_loader, criterion, device)
 
         print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
@@ -107,18 +107,18 @@ if __name__ == '__main__':
     # --- Dataset and Saving Arguments ---
     parser.add_argument('--dataset_path', type=str, default='../processed_data/processed_data.pkl.gz',
                         help='Path to the processed .pkl.gz AIG dataset file.')
-    parser.add_argument('--save_dir', type=str, default='checkpoints', help='Directory to save model checkpoints.')
+    parser.add_argument('--save_dir', type=str, default='../checkpoints', help='Directory to save model checkpoints.')
     parser.add_argument('--train_split', type=float, default=0.8, help='Proportion of the dataset to use for training.')
 
     # --- Model Hyperparameters ---
-    parser.add_argument('--d_model', type=int, default=128, help='Dimension of the model embeddings.')
-    parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads.')
-    parser.add_argument('--num_layers', type=int, default=4, help='Number of transformer encoder layers.')
+    parser.add_argument('--d_model', type=int, default=64, help='Dimension of the model embeddings.')
+    parser.add_argument('--num_heads', type=int, default=4, help='Number of attention heads.')
+    parser.add_argument('--num_layers', type=int, default=2, help='Number of transformer encoder layers.')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
 
     # --- Training Arguments ---
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs.')
-    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training and validation.')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs.')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training and validation.')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for the optimizer.')
     parser.add_argument('--device', type=int, default=0, help='CUDA device index to use.')
 

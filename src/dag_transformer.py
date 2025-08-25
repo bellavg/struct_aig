@@ -5,7 +5,7 @@ from src.layers import TransformerEncoderLayer
 import math
 from torch_geometric.utils import *
 
-#TODO to test
+
 
 class GraphTransformerEncoder(nn.TransformerEncoder):
     """ A standard Transformer Encoder that is aware of DAG-specific arguments. """
@@ -78,7 +78,12 @@ class GraphTransformer(nn.Module):
 
     def forward(self, data, return_attn=False):
         # Deconstruct the graph data object
-        x, edge_index, edge_attr, mask_dag_, batch = data.x, data.edge_index, data.edge_attr, data.mask_rc, data.batch
+        # --- CHANGE: Get the list of masks from `mask_rc_list` ---
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        mask_dag_list = data.mask_rc_list
+
+        # print(f"--- New Batch ---")
+        # print(f"Initial x shape: {x.shape}")
 
         # Create a pointer for batching
         data.ptr = torch.cat([data.batch.new_zeros(1), torch.bincount(data.batch).cumsum(dim=0)], dim=0)
@@ -92,26 +97,25 @@ class GraphTransformer(nn.Module):
         # 2. Add Positional Encoding (DAGPE)
         self.poe = self.poe.to(x.device)
         abs_pe = data.abs_pe
-        # Clamp abs_pe to be within the range of the positional encoding table
         abs_pe = torch.clamp(abs_pe, 0, self.poe.shape[0] - 1)
         pe = self.poe[abs_pe]
         output = output + pe
         output = self.dropout(output)
 
-        # 3. Edge Embedding (now always performed)
+        # 3. Edge Embedding
         if edge_attr is not None:
             edge_attr = self.embedding_edge(edge_attr)
         else:
-            # Handle cases where edge_attr might be missing for some reason
             edge_attr = None
 
         # 4. Pass through the Transformer Encoder
+        # --- CHANGE: Pass the list of masks to the encoder ---
         output = self.encoder(
             output,
-            SAT=self.SAT,  # Use the configured SAT setting
+            SAT=self.SAT,
             abs_pe=abs_pe,
             edge_index=edge_index,
-            mask_dag_=mask_dag_,  # This mask enables DAGRA
+            mask_dag_=mask_dag_list,  # This list is now passed to the attention layer
             dag_rr_edge_index=dag_rr_edge_index,
             edge_attr=edge_attr,
             ptr=data.ptr,
@@ -123,4 +127,6 @@ class GraphTransformer(nn.Module):
             output = self.pooling(output, batch)
 
         # 6. Final Regression Output
-        return self.regressor_head(output)
+        output = self.regressor_head(output)
+
+        return output

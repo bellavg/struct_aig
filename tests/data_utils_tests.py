@@ -9,7 +9,7 @@ from torch_geometric.utils import from_networkx
 
 # --- Import the functions to be tested ---
 # Make sure data_utils.py is in the same directory or your PYTHONPATH
-from src.data_utils import (
+from src.process_data import (
     convert_nx_to_pyg,
     calculate_graph_attributes,
     add_order_info_aig
@@ -216,6 +216,35 @@ class TestAddOrderInfoAIG(unittest.TestCase):
                 node_order_map[v_nx_node],
                 f"Edge ({u_nx_node}, {v_nx_node}) violates topological sort order."
             )
+
+class TestNormalization(unittest.TestCase):
+    """
+    Tests the z-score normalization of graph attributes.
+    """
+
+    def test_z_score_normalization(self):
+        """
+        Tests that the z-score normalization is applied correctly.
+        """
+        # Sample unnormalized data
+        y = torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0])
+
+        # Sample mean and std
+        mean = y.mean()
+        std = y.std(unbiased=False) # Use population std dev for this test
+
+        # Apply normalization
+        normalized_y = (y - mean) / std
+
+        # The mean of the normalized data should be 0
+        self.assertAlmostEqual(normalized_y.mean().item(), 0.0, delta=1e-6)
+
+        # The std of the normalized data should be 1
+        self.assertAlmostEqual(normalized_y.std(unbiased=False).item(), 1.0, delta=1e-6)
+
+        # Check the values
+        expected_normalized_y = torch.tensor([-1.41421356, -0.70710678,  0. ,  0.70710678,  1.41421356])
+        self.assertTrue(torch.allclose(normalized_y, expected_normalized_y, atol=1e-6))
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
-def train_epoch(model, loader, optimizer, criterion, device):
+def train_epoch(model, loader, optimizer, criterion, device, epoch):
     """
     Performs one full training epoch.
 
@@ -20,7 +20,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
     """
     model.train()
     total_loss = 0
-    for data in tqdm(loader, desc="Training"):
+    for batch_idx, data in enumerate(tqdm(loader, desc="Training")):
         data = data.to(device)
         optimizer.zero_grad()
 
@@ -33,8 +33,24 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
         # The ground truth is stored in data.y
         loss = criterion(out, y)
+        # --- MONITORING PRINTS ---
+        # 1. Print loss for every 10 batches
+        if batch_idx % 10 == 0:
+            print(f"Epoch {epoch} | Batch {batch_idx}/{len(loader)} | Batch Loss: {loss.item():.4f}")
+
+        # 2. For the first batch of each epoch, print a sample of predictions vs ground truth
+        if batch_idx == 0:
+            print("--- Sample Predictions vs. Ground Truth (Epoch {}) ---".format(epoch))
+            # Print for the first 3 graphs in the batch
+            num_samples = min(data.num_graphs, 3)
+            for i in range(num_samples):
+                print(f"Sample {i + 1} Pred: {[f'{val:.2f}' for val in out[i].tolist()]}")
+                print(f"Sample {i + 1} True: {[f'{val:.2f}' for val in y[i].tolist()]}")
+            print("----------------------------------------------------")
+        # --- END MONITORING ---
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item() * data.num_graphs
 

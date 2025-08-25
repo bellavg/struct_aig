@@ -1,16 +1,16 @@
 # test_layers.py
 import unittest
 import torch
-from torch_geometric.data import Data, Batch
+from torch_geometric.data import Data
 
-# --- Import the layers to be tested ---
+# --- Import the layers and collate function to be tested ---
 from src.layers import Attention, StructureExtractor, TransformerEncoderLayer
+from src.data import collate_aig # Import the custom collate function
 
 class TestStructureExtractor(unittest.TestCase):
     """
     Tests the StructureExtractor module to ensure it correctly applies GNN layers.
     """
-
     def setUp(self):
         """Set up a simple graph structure."""
         self.embed_dim = 128
@@ -26,9 +26,7 @@ class TestStructureExtractor(unittest.TestCase):
 
     def test_batch_norm_application(self):
         """Tests that batch norm is applied when specified."""
-        # With batch_norm=True (default)
         self.assertTrue(hasattr(self.extractor, 'bn'))
-        # With batch_norm=False
         extractor_no_bn = StructureExtractor(self.embed_dim, gnn_type='gin', num_layers=3, batch_norm=False)
         self.assertFalse(hasattr(extractor_no_bn, 'bn'))
 
@@ -36,44 +34,65 @@ class TestStructureExtractor(unittest.TestCase):
 class TestAttention(unittest.TestCase):
     """
     Tests the Attention module, including the Structure-Aware (SAT) component
-    and the DAG-aware masking (DAGRA).
+    and the DAG-aware masking (DAGRA) with variable-sized graphs.
     """
-
     def setUp(self):
-        """Set up a batch of two graphs."""
+        """Set up a batch of two graphs with different sizes."""
         self.embed_dim = 128
         self.num_heads = 8
         self.attention = Attention(self.embed_dim, self.num_heads)
 
         # Graph 1: 3 nodes
-        x1 = torch.randn(3, self.embed_dim)
-        edge_index1 = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
-        data1 = Data(x=x1, edge_index=edge_index1)
+        data1 = Data(
+            x=torch.randn(3, self.embed_dim),
+            edge_index=torch.tensor([[0, 1], [1, 2]], dtype=torch.long),
+            mask_rc=torch.zeros(3, 3, dtype=torch.bool) # Unpadded mask
+        )
 
         # Graph 2: 4 nodes
-        x2 = torch.randn(4, self.embed_dim)
-        edge_index2 = torch.tensor([[0, 1, 1, 2], [1, 2, 3, 3]], dtype=torch.long)
-        data2 = Data(x=x2, edge_index=edge_index2)
+        data2 = Data(
+            x=torch.randn(4, self.embed_dim),
+            edge_index=torch.tensor([[0, 1, 1, 2], [1, 2, 3, 3]], dtype=torch.long),
+            mask_rc=torch.zeros(4, 4, dtype=torch.bool) # Unpadded mask
+        )
 
-        self.batch = Batch.from_data_list([data1, data2])
+        # Use the custom collate function to create a batch with a list of masks
+        self.batch = collate_aig([data1, data2])
         self.ptr = self.batch.ptr
 
     def test_forward_pass_shape(self):
         """Tests that the output shape is correct for a batch."""
-        out, attn = self.attention(self.batch.x, SAT=True, edge_index=self.batch.edge_index, mask_dag_=None, ptr=self.ptr, return_attn=True)
+        # Pass the list of masks to the mask_dag_ argument
+        out, attn = self.attention(
+            self.batch.x,
+            SAT=True,
+            edge_index=self.batch.edge_index,
+            mask_dag_=self.batch.mask_rc_list, # Use the list
+            ptr=self.ptr,
+            return_attn=True
+        )
         self.assertEqual(out.shape, self.batch.x.shape)
         # Expected attn shape: (batch_size, num_heads, max_nodes, max_nodes)
         # max_nodes in this batch is 4.
         self.assertEqual(attn.shape, (2, self.num_heads, 4, 4))
 
     def test_dag_masking(self):
-        """Tests that the DAG-aware mask is correctly applied."""
-        # Create a mask where node 0 in the first graph cannot attend to node 2
-        mask_dag_ = torch.zeros(2, 4, 4, dtype=torch.bool)
-        mask_dag_[0, 0, 2] = True # From node 0 to 2 in graph 1
+        """Tests that the DAG-aware mask is correctly applied from a list."""
+        # Create a list of masks for the batch
+        mask1 = torch.zeros(3, 3, dtype=torch.bool)
+        mask1[0, 2] = True  # Mask attention from node 0 to 2 in graph 1
+        mask2 = torch.zeros(4, 4, dtype=torch.bool)
+        mask_list = [mask1, mask2]
 
-        out, attn = self.attention(self.batch.x, SAT=True, edge_index=self.batch.edge_index, mask_dag_=mask_dag_, ptr=self.ptr, return_attn=True)
-        # The attention score should be 0 (or close to it) due to the softmax over -inf
+        out, attn = self.attention(
+            self.batch.x,
+            SAT=True,
+            edge_index=self.batch.edge_index,
+            mask_dag_=mask_list, # Pass the list
+            ptr=self.ptr,
+            return_attn=True
+        )
+        # The attention score should be 0 (or close to it) due to softmax over -inf
         for head in range(self.num_heads):
             self.assertAlmostEqual(attn[0, head, 0, 2].item(), 0.0, places=6)
 
@@ -82,22 +101,24 @@ class TestTransformerEncoderLayer(unittest.TestCase):
     """
     Tests a single layer of the Graph Transformer.
     """
-
     def setUp(self):
         """Set up a batch of data for the encoder layer."""
         self.d_model = 128
         self.nhead = 8
         self.layer = TransformerEncoderLayer(self.d_model, self.nhead)
 
-        x1 = torch.randn(3, self.d_model)
-        edge_index1 = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
-        data1 = Data(x=x1, edge_index=edge_index1)
+        data1 = Data(
+            x=torch.randn(3, self.d_model),
+            edge_index=torch.tensor([[0, 1], [1, 2]], dtype=torch.long),
+            mask_rc=torch.zeros(3, 3, dtype=torch.bool)
+        )
+        data2 = Data(
+            x=torch.randn(5, self.d_model),
+            edge_index=torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=torch.long),
+            mask_rc=torch.zeros(5, 5, dtype=torch.bool)
+        )
 
-        x2 = torch.randn(4, self.d_model)
-        edge_index2 = torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long)
-        data2 = Data(x=x2, edge_index=edge_index2)
-
-        self.batch = Batch.from_data_list([data1, data2])
+        self.batch = collate_aig([data1, data2])
         self.ptr = self.batch.ptr
 
     def test_forward_pass_shape(self):
@@ -108,7 +129,7 @@ class TestTransformerEncoderLayer(unittest.TestCase):
             abs_pe_type='dagpe',
             abs_pe=None,
             edge_index=self.batch.edge_index,
-            mask_dag_=None,
+            mask_dag_=self.batch.mask_rc_list, # Use the list
             dag_rr_edge_index=None,
             ptr=self.ptr
         )
@@ -116,19 +137,20 @@ class TestTransformerEncoderLayer(unittest.TestCase):
 
 
 # test_dag_transformer.py
+# (No changes needed for the second file, but included for completeness)
 import unittest
 import torch
-from torch_geometric.data import Data, Batch
+from torch_geometric.data import Data
 
-# --- Import the model to be tested ---
+# --- Import the model and collate function to be tested ---
 from src.dag_transformer import GraphTransformer
+from src.data import collate_aig
 
 class TestGraphTransformer(unittest.TestCase):
     """
     Tests the complete GraphTransformer model to ensure it can process a batch
-    of graph data and produce a regression output of the correct size.
+    of variable-sized graph data and produce a regression output.
     """
-
     def setUp(self):
         """Set up model and a batch of graph data for testing."""
         self.d_model = 128
@@ -144,31 +166,27 @@ class TestGraphTransformer(unittest.TestCase):
             num_layers=self.num_layers
         )
 
-        # --- FIX: Make graphs in the batch have the same size to resolve the collate error ---
-        # The RuntimeError occurs because the default collate function cannot batch
-        # the `mask_rc` attribute (e.g., [5, 5] and [7, 7]) when node counts differ.
-        # For a unit test, using graphs of the same size is a straightforward solution.
-        num_nodes_for_test = 7
-
-        # Graph 1 (now with 7 nodes)
+        # --- Test with graphs of DIFFERENT sizes ---
+        # Graph 1 (5 nodes)
         data1 = Data(
-            x=torch.randn(num_nodes_for_test, 4),
-            edge_index=torch.tensor([[0, 1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6]], dtype=torch.long),
-            edge_attr=torch.randn(6, 2),
-            mask_rc=torch.zeros(num_nodes_for_test, num_nodes_for_test, dtype=torch.bool),
-            abs_pe=torch.tensor([0, 1, 2, 3, 4, 5, 6], dtype=torch.long)
+            x=torch.randn(5, 4),
+            edge_index=torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=torch.long),
+            edge_attr=torch.randn(4, 2),
+            mask_rc=torch.zeros(5, 5, dtype=torch.bool),
+            abs_pe=torch.arange(5, dtype=torch.long)
         )
 
         # Graph 2 (7 nodes)
         data2 = Data(
-            x=torch.randn(num_nodes_for_test, 4),
+            x=torch.randn(7, 4),
             edge_index=torch.tensor([[0, 1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6]], dtype=torch.long),
             edge_attr=torch.randn(6, 2),
-            mask_rc=torch.zeros(num_nodes_for_test, num_nodes_for_test, dtype=torch.bool),
-            abs_pe=torch.tensor([0, 1, 1, 2, 2, 3, 4], dtype=torch.long)
+            mask_rc=torch.zeros(7, 7, dtype=torch.bool),
+            abs_pe=torch.arange(7, dtype=torch.long)
         )
 
-        self.batch = Batch.from_data_list([data1, data2])
+        # Use the custom collate function to correctly batch the data
+        self.batch = collate_aig([data1, data2])
 
     def test_forward_pass_output_shape(self):
         """Tests that the model's output has the correct regression vector shape."""
@@ -193,4 +211,13 @@ class TestGraphTransformer(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main(argv=['first-arg-is-ignored'], exit=False)
+    # Create a TestSuite
+    suite = unittest.TestSuite()
+    suite.addTest(unittest.makeSuite(TestStructureExtractor))
+    suite.addTest(unittest.makeSuite(TestAttention))
+    suite.addTest(unittest.makeSuite(TestTransformerEncoderLayer))
+    suite.addTest(unittest.makeSuite(TestGraphTransformer))
+
+    # Run the tests
+    runner = unittest.TextTestRunner()
+    runner.run(suite)
