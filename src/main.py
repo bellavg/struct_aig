@@ -4,10 +4,11 @@
 
 # part 1
 
-# TODO run with example data (max 5000 nodes)
+# run with example data
+# add in padding for mask
 # TODO make into pytorch lightning
-# TODO add in padding for mask and x (check other laptop to see what needs padding), test all this to make sure it still works
 # TODO full training of encoder? - check if makes sense.
+# get scope of data
 # TODO make model Siamese and add difference vector
 
 # -*- coding: utf-8 -*-
