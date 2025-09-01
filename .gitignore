@@ -6,7 +6,7 @@ __pycache__/
 *.aig
 *.pkl.gz
 # C extensions
-
+!processed_data/processed_data.pkl.gz
 *.so
 *.DS_Store
 # Distribution / packaging
