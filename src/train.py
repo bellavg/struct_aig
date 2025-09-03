@@ -29,13 +29,13 @@ def train_epoch(model, loader, optimizer, criterion, device, epoch):
 
         # Reshape the ground truth tensor to match the output shape
         # data.y is [batch_size * 16], we need [batch_size, 16]
-        y = data.y.view(data.num_graphs, -1)
+        y = data.y.view(-1,1)
 
         # The ground truth is stored in data.y
         loss = criterion(out, y)
-        # --- MONITORING PRINTS ---
+
         # 1. Print loss for every 10 batches
-        if batch_idx % 10 == 0:
+        if batch_idx % 100 == 0:
             print(f"Epoch {epoch} | Batch {batch_idx}/{len(loader)} | Batch Loss: {loss.item():.4f}")
 
         # 2. For the first batch of each epoch, print a sample of predictions vs ground truth
@@ -78,7 +78,7 @@ def evaluate(model, loader, criterion, device):
             out = model(data)
 
             # Reshape the ground truth tensor to match the output shape
-            y = data.y.view(data.num_graphs, -1)
+            y = data.y.view(-1, 1)
 
             loss = criterion(out, y)
             total_loss += loss.item() * data.num_graphs

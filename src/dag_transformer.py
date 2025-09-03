@@ -32,7 +32,7 @@ class GraphTransformer(nn.Module):
     and reachability-based attention (DAGRA) to predict a 16-dimensional structural attribute vector.
     """
 
-    def __init__(self, in_size=4, out_size=16, d_model=128, num_heads=8,
+    def __init__(self, in_size=4, out_size=1, d_model=128, num_heads=8,
                  dim_feedforward=512, dropout=0.1, num_layers=4,
                  batch_norm=True, num_edge_features=2,
                  in_embed=True, edge_embed=True, use_global_pool=True,
@@ -109,7 +109,7 @@ class GraphTransformer(nn.Module):
             edge_attr = None
 
         # 4. Pass through the Transformer Encoder
-        # --- CHANGE: Pass the list of masks to the encoder ---
+
         output = self.encoder(
             output,
             SAT=self.SAT,

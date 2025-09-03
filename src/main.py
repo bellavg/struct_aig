@@ -10,19 +10,53 @@
 # TODO full training of encoder? - check if makes sense.
 # get scope of data
 # TODO make model Siamese and add difference vector
+# TODO add in intermittent eval every N epochs
 
 # -*- coding: utf-8 -*-
 import argparse
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Sampler
 from torch.optim import Adam
 from torch.nn import MSELoss
 import os
+import random
 
 # --- Local Imports ---
 from src.data import AIGDataset, collate_aig
 from src.dag_transformer import GraphTransformer
 from src.train import train_epoch, evaluate
+
+
+class BucketSampler(Sampler):
+    """
+    A custom sampler that groups graphs of similar sizes into batches.
+    """
+
+    def __init__(self, dataset, batch_size, shuffle=True):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+
+        # Group indices by graph size
+        self.groups = self._group_by_size()
+
+    def _group_by_size(self):
+        # Sort the dataset by the number of nodes in each graph
+        sorted_indices = sorted(range(len(self.dataset)), key=lambda i: self.dataset[i][0].num_nodes)
+
+        # Create batches of indices
+        groups = [sorted_indices[i:i + self.batch_size] for i in range(0, len(sorted_indices), self.batch_size)]
+        return groups
+
+    def __iter__(self):
+        if self.shuffle:
+            random.shuffle(self.groups)
+
+        for group in self.groups:
+            yield group
+
+    def __len__(self):
+        return len(self.groups)
 
 
 def main(args):
@@ -50,17 +84,18 @@ def main(args):
     # Perform the split
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
-    # Create DataLoaders
+    # --- Create Samplers and DataLoaders ---
+    train_sampler = BucketSampler(train_dataset, args.batch_size, shuffle=True)
+    val_sampler = BucketSampler(val_dataset, args.batch_size, shuffle=False)
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
+        batch_sampler=train_sampler,
         collate_fn=collate_aig
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
+        batch_sampler=val_sampler,
         collate_fn=collate_aig
     )
 
@@ -69,7 +104,7 @@ def main(args):
     model = GraphTransformer(
         in_size=4,  # [const, pi, gate, po]
         num_edge_features=2,  # [regular, inverted]
-        out_size=16,  # Target vector size
+        out_size=1,  # Target vector size is 1 for wirelength
         d_model=args.d_model,
         num_heads=args.num_heads,
         num_layers=args.num_layers,

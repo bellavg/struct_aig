@@ -10,7 +10,7 @@ import argparse
 import networkx as nx
 from torch_geometric.data import Data
 from torch_geometric.utils import to_undirected, from_networkx
-
+import pandas as pd
 # --- NEW: Import aigverse and its views ---
 import aigverse
 from typing import Any, Final
@@ -54,93 +54,6 @@ def load_module_state(model, state_name):
 
 
 '''Data preprocessing for AIGER files'''
-
-
-def calculate_graph_attributes(aig: Aig, G_nx: nx.DiGraph):
-    """
-    Calculates a vector of 16 structural attributes for a given AIG.
-    This vector will be the regression target 'y'.
-    """
-    # 1. Number of inversions
-    num_inversions = sum(1 for po in aig.pos() if po.get_complement()) + \
-                     sum(1 for gate in aig.gates() for fanin in aig.fanins(gate) if fanin.get_complement())
-
-    # 2. Number of nodes & 3. Number of edges
-    num_nodes = G_nx.number_of_nodes()
-    num_edges = G_nx.number_of_edges()
-
-    # 4. Graph depth & 5. Level variance
-    levels = np.array([data['level'] for _, data in G_nx.nodes(data=True)])
-    depth = np.max(levels) if len(levels) > 0 else 0
-    level_variance = np.var(levels) if len(levels) > 1 else 0
-
-    # 6. Avg fanout, 7. Max fanout, 8. Variance fanout
-    # Fanouts are now directly extracted from the NetworkX graph attributes.
-    fanouts = np.array([data['fanouts'] for _, data in G_nx.nodes(data=True)])
-    avg_fanout = np.mean(fanouts) if len(fanouts) > 0 else 0
-    max_fanout = np.max(fanouts) if len(fanouts) > 0 else 0
-    variance_fanout = np.var(fanouts) if len(fanouts) > 1 else 0
-
-    # 9. Avg edge level span & 10. Variance edge level span
-    edge_level_spans = []
-    for u, v in G_nx.edges():
-        level_u = G_nx.nodes[u].get('level', 0)
-        level_v = G_nx.nodes[v].get('level', 0)
-        edge_level_spans.append(abs(level_v - level_u))
-
-    avg_edge_level_span = np.mean(edge_level_spans) if edge_level_spans else 0
-    variance_edge_level_span = np.var(edge_level_spans) if len(edge_level_spans) > 1 else 0
-
-    # NetworkX-based metrics
-    # 11. Density
-    density = nx.density(G_nx)
-
-    # 12. Degree assortativity
-    assortativity = nx.degree_assortativity_coefficient(G_nx) if num_nodes > 1 else 0
-
-    # Metrics on the undirected version of the largest weakly connected component
-    if not G_nx.nodes:
-        return np.zeros(16, dtype=np.float32)
-
-    if nx.is_weakly_connected(G_nx):
-        G_undirected = G_nx.to_undirected()
-    else:
-        largest_cc = max(nx.weakly_connected_components(G_nx), key=len)
-        G_undirected = G_nx.subgraph(largest_cc).to_undirected()
-
-    # 13. Diameter & 14. Radius & 16. Average Eccentricity
-    try:
-        if nx.is_connected(G_undirected):
-            diameter = nx.diameter(G_undirected)
-            radius = nx.radius(G_undirected)
-            # FIXED: Calculate average eccentricity manually
-            avg_eccentricity = np.mean(list(nx.eccentricity(G_undirected).values()))
-        else:
-            diameter, radius, avg_eccentricity = -1, -1, -1
-    except nx.NetworkXError:
-        diameter, radius, avg_eccentricity = -1, -1, -1
-
-    # 15. Algebraic connectivity
-    alg_connectivity = nx.algebraic_connectivity(G_undirected) if G_undirected.number_of_nodes() > 1 else 0
-
-    feature_order = [
-        'num_edges', 'degree_assortativity', 'num_inversions', 'num_nodes', 'max_fanout',
-        'graph_depth', 'var_fanout', 'level_variance', 'avg_edge_level_span',
-        'var_edge_level_span', 'diameter', 'radius', 'avg_eccentricity',
-        'density', 'algebraic_connectivity', 'avg_fanout'
-    ]
-
-    stats = {
-        'num_inversions': num_inversions, 'num_nodes': num_nodes, 'num_edges': num_edges,
-        'graph_depth': depth, 'level_variance': level_variance, 'avg_fanout': avg_fanout,
-        'max_fanout': max_fanout, 'var_fanout': variance_fanout,
-        'avg_edge_level_span': avg_edge_level_span,
-        'var_edge_level_span': variance_edge_level_span, 'density': density,
-        'degree_assortativity': assortativity, 'diameter': diameter, 'radius': radius,
-        'algebraic_connectivity': alg_connectivity, 'avg_eccentricity': avg_eccentricity
-    }
-
-    return np.array([stats[key] for key in feature_order], dtype=np.float32)
 
 
 def convert_nx_to_pyg(g_nx: nx.DiGraph):
@@ -243,45 +156,62 @@ def add_order_info_aig(graph: Data, g_nx: nx.DiGraph, node_map: dict):
     return graph
 
 
-def process_and_save_aig_graphs(data_dir, output_path):
+def process_and_save_aig_graphs(data_dir, output_path, max_nodes=50000):
     """
-    Loads all .aig files, processes them, calculates structural attributes,
-    computes normalization stats, and saves everything to a single file.
+    Loads all .aig files from subdirectories, processes them, loads pre-calculated wirelengths,
+    sorts by graph size, computes normalization stats, and saves everything to a single file.
     """
     g_list = []
-    attributes_list = []  # Store attributes separately for normalization
+    attributes_list = []  # This will store the raw wirelengths
     max_n = 0
 
-    try:
-        aiger_files = [f for f in os.listdir(data_dir) if f.endswith('.aig')]
-    except FileNotFoundError:
-        print(f"Error: The directory '{data_dir}' was not found.")
-        return
+    # Walk through the directory structure to find subfolders with wirelength files
+    for subdir, _, files in os.walk(data_dir):
+        if 'wirelength' in files:
+            wirelength_file_path = os.path.join(subdir, 'wirelength')
 
-    if not aiger_files:
-        print(f"No .aig files found in '{data_dir}'.")
-        return
+            # Read wirelengths into a dictionary for easy lookup
+            wirelength_df = pd.read_csv(wirelength_file_path, delim_whitespace=True, header=None,
+                                        names=['aig_file', 'wirelength'])
+            wirelength_dict = wirelength_df.set_index('aig_file')['wirelength'].to_dict()
 
-    for filename in tqdm(aiger_files, desc="Loading and processing AIGER files"):
-        filepath = os.path.join(data_dir, filename)
-        try:
-            aig = aigverse.read_aiger_into_aig(filepath)
-            g_nx = aig.to_networkx( levels=True, fanouts=True)
-            g_pyg, node_map = convert_nx_to_pyg(g_nx)
+            aiger_files = [f for f in files if f.endswith('.aig')]
 
-            if g_pyg.num_nodes == 0:
-                print(f"Skipping empty or invalid graph: {filename}")
+            if not aiger_files:
+                print(f"No .aig files found in '{subdir}'.")
                 continue
 
-            g_pyg = add_order_info_aig(g_pyg, g_nx, node_map)
-            attributes = calculate_graph_attributes(aig, g_nx)
-            max_n = max(max_n, g_pyg.num_nodes)
+            for filename in tqdm(aiger_files, desc=f"Processing AIGER files in {subdir}"):
+                if filename in wirelength_dict:
+                    filepath = os.path.join(subdir, filename)
+                    try:
+                        aig = aigverse.read_aiger_into_aig(filepath)
+                        g_nx = aig.to_networkx(levels=True, fanouts=True)
+                        g_pyg, node_map = convert_nx_to_pyg(g_nx)
 
-            # Append to separate lists
-            g_list.append(g_pyg)
-            attributes_list.append(attributes)
-        except Exception as e:
-            print(f"Could not process file {filename}: {e}")
+                        # --- ADDED: Filter graphs by number of nodes ---
+                        if g_pyg.num_nodes > max_nodes:
+                            print(f"Skipping graph {filename} with {g_pyg.num_nodes} nodes (limit is {max_nodes}).")
+                            continue
+
+                        if g_pyg.num_nodes == 0:
+                            print(f"Skipping empty or invalid graph: {filename}")
+                            continue
+
+                        g_pyg = add_order_info_aig(g_pyg, g_nx, node_map)
+
+                        # Get the pre-calculated wirelength from the dictionary
+                        wirelength = wirelength_dict[filename]
+                        attributes = np.array([wirelength], dtype=np.float32)
+
+                        max_n = max(max_n, g_pyg.num_nodes)
+
+                        g_list.append(g_pyg)
+                        attributes_list.append(attributes)
+                    except Exception as e:
+                        print(f"Could not process file {filename}: {e}")
+                else:
+                    print(f"Wirelength not found for {filename} in {wirelength_file_path}")
 
     ng = len(g_list)
     if ng == 0:
@@ -291,22 +221,33 @@ def process_and_save_aig_graphs(data_dir, output_path):
     print(f'\nSuccessfully processed {ng} graphs.')
     print(f'Maximum # nodes: {max_n}')
 
-    # --- NEW: Calculate and save normalization statistics ---
-    print("Calculating normalization statistics...")
-    attributes_tensor = torch.tensor(np.array(attributes_list), dtype=torch.float)
-    mean = torch.mean(attributes_tensor, dim=0)
-    std = torch.std(attributes_tensor, dim=0)
-    # Add a small epsilon to std to avoid division by zero
-    std[std == 0] = 1.0
+    # --- Sort graphs and attributes by the number of nodes ---
+    print("Sorting graphs by number of nodes...")
+    combined = list(zip(g_list, attributes_list))
+    combined.sort(key=lambda x: x[0].num_nodes)
+    g_list_sorted, attributes_list_sorted = zip(*combined)
 
-    # Combine graphs and attributes back into a list of tuples
-    final_data_list = list(zip(g_list, attributes_list))
+    # --- Standardize the wirelength values ---
+    print("Standardizing wirelength values...")
+    attributes_tensor = torch.tensor(np.array(attributes_list_sorted), dtype=torch.float)
+    mean = attributes_tensor.mean(dim=0)
+    std = attributes_tensor.std(dim=0)
+    std[std == 0] = 1e-8
+
+    standardized_attributes = (attributes_tensor - mean) / std
+
+    # --- Combine graphs with both raw and standardized attributes ---
+    final_data_list = []
+    for i in range(len(g_list_sorted)):
+        raw_attr = torch.tensor(attributes_list_sorted[i], dtype=torch.float)
+        std_attr = standardized_attributes[i]
+        final_data_list.append((g_list_sorted[i], (raw_attr, std_attr)))
 
     # Create a dictionary to save everything
     save_data = {
         'data': final_data_list,
         'mean': mean,
-        'std': std
+        'std': std,
     }
 
     # Save the dictionary object
@@ -314,12 +255,15 @@ def process_and_save_aig_graphs(data_dir, output_path):
     save_object(save_data, output_path)
     print("Processing and saving complete.")
 
+
 if __name__ == '__main__':
     # Example of how to run the script from the command line
     parser = argparse.ArgumentParser(description='Preprocess AIGER files into a PyG data file.')
     parser.add_argument('--data-dir', type=str, default="../trial_data", help='Directory containing the .aig files.')
-
-    parser.add_argument('--output-path', type=str, default='../processed_data/processed_data.pkl.gz', help='Path to save the output .pkl.gz file.')
+    parser.add_argument('--output-path', type=str, default='../processed_data/processed_data.pkl.gz',
+                        help='Path to save the output .pkl.gz file.')
+    parser.add_argument('--max-nodes', type=int, default=50000,
+                        help='Maximum number of nodes to include in the dataset.')
     args = parser.parse_args()
 
-    process_and_save_aig_graphs(args.data_dir, args.output_path)
+    process_and_save_aig_graphs(args.data_dir, args.output_path, args.max_nodes)

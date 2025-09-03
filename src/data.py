@@ -17,9 +17,6 @@ class AIGDataset(Dataset):
     """
     A PyTorch Dataset for loading pre-processed AIG graphs and their
     structural attributes for a regression task.
-
-    This class is designed to work with the output of the
-    `process_and_save_aig_graphs` function from `data_utils.py`.
     """
     def __init__(self, processed_file_path):
         """
@@ -27,11 +24,10 @@ class AIGDataset(Dataset):
             processed_file_path (str): The path to the .pkl.gz file containing
                                        the dictionary of data and normalization stats.
         """
-        # --- CHANGE: Load the dictionary containing data, mean, and std ---
         loaded_data = load_object(processed_file_path)
         self.data_list = loaded_data['data']
-        self.mean = loaded_data['mean']
-        self.std = loaded_data['std']
+        self.mean = loaded_data.get('mean')
+        self.std = loaded_data.get('std')
 
     def __len__(self):
         """Returns the total number of graphs in the dataset."""
@@ -40,22 +36,18 @@ class AIGDataset(Dataset):
     def __getitem__(self, idx):
         """
         Retrieves the graph and its corresponding attributes at a given index,
-        normalizes the attributes, and assigns them to the graph's 'y' property.
+        and assigns them to the graph's 'y' and 'y_raw' properties.
 
         Args:
             idx (int): The index of the data point to retrieve.
 
         Returns:
-            torch_geometric.data.Data: A graph data object ready for the model,
-                                       with the normalized target vector in `data.y`.
+            torch_geometric.data.Data: A graph data object ready for the model.
         """
-        # Retrieve the pre-processed graph and its raw structural attributes
-        graph, attributes = self.data_list[idx]
+        graph, (raw_attributes, std_attributes) = self.data_list[idx]
 
-        # --- CHANGE: Normalize the attributes before assigning them to 'y' ---
-        attributes_tensor = torch.tensor(attributes, dtype=torch.float)
-        normalized_attributes = (attributes_tensor - self.mean) / self.std
-        graph.y = normalized_attributes
+        graph.y = std_attributes
+        graph.y_raw = raw_attributes
 
         return graph
 
