@@ -1,17 +1,3 @@
-# set up train and testing
-
-# check for processed files first. have flag that says reprocess just in case the data is updated
-
-# part 1
-
-# run with example data
-# add in padding for mask
-# TODO make into pytorch lightning
-# TODO full training of encoder? - check if makes sense.
-# get scope of data
-# TODO make model Siamese and add difference vector
-# TODO add in intermittent eval every N epochs
-
 # -*- coding: utf-8 -*-
 import argparse
 import torch
@@ -122,16 +108,19 @@ def main(args):
         print(f"\n--- Epoch {epoch}/{args.epochs} ---")
 
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
-        val_loss = evaluate(model, val_loader, criterion, device)
+        print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}")
 
-        print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
-        # Save the model if it has the best validation loss so far
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            save_path = os.path.join(args.save_dir, 'best_model.pth')
-            torch.save(model.state_dict(), save_path)
-            print(f"Model saved to {save_path} (Val Loss: {best_val_loss:.4f})")
+        if epoch % args.eval_every == 0 or epoch == args.epochs:
+            val_loss = evaluate(model, val_loader, criterion, device)
+            print(f"Epoch {epoch}: Val Loss: {val_loss:.4f}")
+
+            # Save the model if it has the best validation loss so far
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                save_path = os.path.join(args.save_dir, 'best_model.pth')
+                torch.save(model.state_dict(), save_path)
+                print(f"Model saved to {save_path} (Val Loss: {best_val_loss:.4f})")
 
     print("\nTraining complete.")
     print(f"Best validation loss: {best_val_loss:.4f}")
@@ -147,16 +136,20 @@ if __name__ == '__main__':
     parser.add_argument('--train_split', type=float, default=0.8, help='Proportion of the dataset to use for training.')
 
     # --- Model Hyperparameters ---
-    parser.add_argument('--d_model', type=int, default=64, help='Dimension of the model embeddings.')
-    parser.add_argument('--num_heads', type=int, default=4, help='Number of attention heads.')
-    parser.add_argument('--num_layers', type=int, default=2, help='Number of transformer encoder layers.')
+    parser.add_argument('--d_model', type=int, default=128, help='Dimension of the model embeddings.')
+    parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads.')
+    parser.add_argument('--num_layers', type=int, default=4, help='Number of transformer encoder layers.')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate.')
 
     # --- Training Arguments ---
-    parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs.')
-    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training and validation.')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs.')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training and validation.')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for the optimizer.')
     parser.add_argument('--device', type=int, default=0, help='CUDA device index to use.')
+    # --- ADDED: Argument for evaluation frequency ---
+    parser.add_argument('--eval_every', type=int, default=5, help='Evaluate on the validation set every N epochs.')
+
 
     args = parser.parse_args()
     main(args)
+
